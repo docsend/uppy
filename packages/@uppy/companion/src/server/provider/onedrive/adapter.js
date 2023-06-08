@@ -1,11 +1,19 @@
 const querystring = require('node:querystring')
 
-const isFolder = (item) => {
+const isDrive = (item) => {
   if (item.remoteItem) {
-    return !!item.remoteItem.folder
+    return !!item.remoteItem.driveType
   }
 
-  return !!item.folder
+  return !!item.driveType
+}
+
+const isFolder = (item) => {
+  if (item.remoteItem) {
+    return !!item.remoteItem.folder || isDrive(item)
+  }
+
+  return !!item.folder || isDrive(item)
 }
 
 const getItemSize = (item) => {
@@ -13,7 +21,7 @@ const getItemSize = (item) => {
 }
 
 const getItemThumbnailUrl = (item) => {
-  return item.thumbnails[0] ? item.thumbnails[0].medium.url : null
+  return item.thumbnails && item.thumbnails[0] ? item.thumbnails[0].medium.url : null
 }
 
 const getItemIcon = (item) => {
@@ -40,6 +48,10 @@ const getItemId = (item) => {
 }
 
 const getItemRequestPath = (item) => {
+  if (isDrive(item)) {
+    return `root?driveId=${getItemId(item)}`
+  }
+
   let query = `?driveId=${item.parentReference.driveId}`
   if (item.remoteItem) {
     query = `?driveId=${item.remoteItem.parentReference.driveId}`
@@ -60,7 +72,7 @@ const getNextPagePath = (data) => {
   return `?${querystring.stringify(query)}`
 }
 
-module.exports = (res, username) => {
+module.exports = (res, username, includeSharepoint) => {
   const data = { username, items: [] }
   const items = getItemSubList(res)
   items.forEach((item) => {
@@ -76,6 +88,15 @@ module.exports = (res, username) => {
       size: getItemSize(item),
     })
   })
+  if (includeSharepoint) {
+    data.items.push({
+      isFolder: true,
+      icon: 'folder',
+      name: 'SharePoint',
+      id: 'root',
+      requestPath: 'root?siteId=/',
+    })
+  }
 
   data.nextPagePath = getNextPagePath(res)
 
