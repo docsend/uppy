@@ -1,5 +1,6 @@
 const got = require('got').default
 
+const querystring = require('node:querystring')
 const Provider = require('../Provider')
 const logger = require('../../logger')
 const adaptData = require('./adapter')
@@ -39,8 +40,30 @@ class OneDrive extends Provider {
    */
   async list ({ directory, query, token }) {
     return this.#withErrorHandling('provider.onedrive.list.error', async () => {
-      const path = directory ? `items/${directory}` : 'root'
-      const qs = { $expand: 'thumbnails' }
+      let path
+      /** @type {Object<string, string>} */
+      const qs = {}
+
+      if (query.siteId) {
+        if (query.siteId === '/') {
+          path = 'sites'
+          qs.search = '*'
+        } else {
+          path = `sites/${query.siteId}/drives`
+        }
+      } else if (!query.driveId) {
+        path = 'me/drives'
+      } else {
+        path = `drives/${query.driveId}/`
+        if (!!directory && directory !== 'root') {
+          path += `items/${directory}`
+        } else {
+          path += 'root'
+        }
+        path += '/children'
+        qs.$expand = 'thumbnails'
+      }
+
       if (query.cursor) {
         qs.$skiptoken = query.cursor
       }
@@ -49,11 +72,41 @@ class OneDrive extends Provider {
 
       const [{ mail, userPrincipalName }, list] = await Promise.all([
         client.get('me', { responseType: 'json' }).json(),
-        client.get(`${getRootPath(query)}/${path}/children`, { searchParams: qs, responseType: 'json' }).json(),
+        client.get(path, { searchParams: qs, responseType: 'json' }).json(),
       ])
 
-      return adaptData(list, mail || userPrincipalName)
+      if (query.siteId === '/') {
+        return this.adaptAllSharepointSitesData(list, mail || userPrincipalName)
+      }
+      return adaptData(list, mail || userPrincipalName, !query.driveId && !query.siteId)
     })
+  }
+
+  getNextPagePath = (data) => {
+    if (!data['@odata.nextLink']) {
+      return null
+    }
+
+    const query = { cursor: querystring.parse(data['@odata.nextLink']).$skiptoken }
+    return `?${querystring.stringify(query)}`
+  }
+
+  adaptAllSharepointSitesData (res, username) {
+    const items = res.value
+    return {
+      username,
+      items:
+      items.map((item) => {
+        return {
+          isFolder: true,
+          icon: 'folder',
+          name: item.displayName,
+          id: item.id,
+          requestPath: `root?siteId=${item.id}`,
+        }
+      }),
+      nextPagePath: this.getNextPagePath(res),
+    }
   }
 
   async download ({ id, token, query }) {
